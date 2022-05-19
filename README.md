@@ -1,1 +1,1 @@
-RNA-Seq differentail expression analysi using DESeq2 
+RNA-Seq Differential expression analysis using DESeq2 
