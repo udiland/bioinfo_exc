@@ -23,7 +23,7 @@ library(DESeq2)
 # set working directory
 setwd("~/<path>/bioinfo_exc")
 
-# read count data 
+# read count data (place column number 1 as rownames)
 counts <- read.table("data/counts.txt", sep = "\t", header = TRUE, row.names = 1)
 
 # have a look
@@ -44,7 +44,7 @@ saveRDS(cpm, file = "noraml_lesion_CPM.rds")
 
 
 # read sample annotation (metadata)
-annot <- read.table("data/sample-annotation.txt", sep = "\t", header = T)
+annot <- read.table("data/sample-annotation.txt", sep = "\t", header = T, row.names = 1)
 
 # have a look
 head(annot)
@@ -62,7 +62,7 @@ lesional   normal
 dim(annot)[1]
 
 #are the names the same in counts and annotation?
-sum(colnames(counts) %in% annot$sample_id)
+sum(colnames(counts) %in% rownames(annot))
 
 
 
@@ -127,6 +127,36 @@ plot(density(log10(cpm$SRR1146078)))
 
 keep = !"SRR1146078" == names(cpm)
 cpm <- cpm[, keep]
+
+# also remove tha sample from the annotation table
+# copy row names to new column (otherwise they will be lost)
+annot$names <- rownames(annot)
+# filter rows 
+keep <- !(rownames(annot) == "SRR1146078") 
+
+annot <- annot[keep,]
+
+# remove 'names' column
+annot <- data.frame(type = annot[, c("type")], row.names = annot$names)
+
+# define 'type' column as factor and specify what levels is the 'base' (what we will compare to)
+annot$type <- factor(annot$type, levels= c("normal" ,"lesional"))
+
+#check that the order of sample names is the same in the column of the CPM and rows of annotation table
+all(colnames(cpm) == rownames(annot))
+
+# get the count data based on the filtartion of CPM
+counts <- counts[rownames(cpm), colnames(cpm)]
+
+# build deseq2 object
+dds <- DESeqDataSetFromMatrix(countData = counts,
+                              colData = annot,
+                              design = ~type)
+dds
+
+
+
+
 
 
 
