@@ -1,0 +1,9 @@
+name: bioinfo_exc
+channels:
+  - r
+  - bioconda
+dependencies:
+  - r=4.1.2
+  - rstudio
+  - r-ggplot2
+ 
