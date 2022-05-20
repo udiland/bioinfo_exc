@@ -1,15 +1,18 @@
 
 
-  #########################################################################
-  #                                                                       #                                 
-  #        RNA-Seq differential analysis expression with DESeq2           #                
-  #                                                                       #
-  #                                                                       #
-  #########################################################################
+#########################################################################
+#                                                                       #                                 
+#        RNA-Seq differential analysis expression with DESeq2           #                
+#                                                                       #
+#                                                                       #
+#########################################################################
 
+
+# load packges
+library(ggplot2)
+library(pheatmap)
 
 #install & load DESeq2
-
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
 
@@ -36,6 +39,10 @@ dim(counts)
 # calculate count per million (CPM) in order to normlize counts by library size 
 cpm <- apply(counts,2, function(x) (x/sum(x))*1e6)
 
+# save count as RDS file
+saveRDS(cpm, file = "noraml_lesion_CPM.rds")
+
+
 # read sample annotation (metadata)
 annot <- read.table("data/sample-annotation.txt", sep = "\t", header = T)
 
@@ -56,6 +63,7 @@ dim(annot)[1]
 
 #are the names the same in counts and annotation?
 sum(colnames(counts) %in% annot$sample_id)
+
 
 
 #make a vector of sample_id for each condition (normal/)
@@ -86,3 +94,47 @@ cpm <- cpm[genes2keep ,]
 # how many genes we have left?
 dim(cpm)[1]
 #18286
+
+# save filtered count as RDS file
+saveRDS(cpm, file = "noraml_lesion_CPM_filtered.rds")
+
+# check the samples integrety and variation
+
+# plot log10(cpm) distribution for each sample in normal group
+plot(density(log10(cpm[,samples_normal[1]] + 0.001)))
+
+for (i in samples_normal[2:length(samples_normal)]){
+  lines(density(log10(cpm[, i] + 0.001)))
+}
+# the log10(cpm) distribution looks more or less similar in the normal group
+
+# plot log10(cpm) distribution for each sample in lesional group
+plot(density(log10(cpm[,samples_lesional[1]] + 0.001)))
+for (i in samples_lesional[2:length(samples_lesional)]){
+  lines(density(log10(cpm[, i] + 0.001)))
+}
+# from the plot its looks like one sample values distribute different than the rest 
+which(colMeans(log10(cpm[,samples_lesional] + 0.001)) < 1)
+#sample SRR1146078 has values that are a bit lower than most of samples in the lesion group
+
+# change cpm matrix to dataframe for convience
+cpm <- as.data.frame(cpm)
+# look only at the 
+plot(density(log10(cpm$SRR1146078)))
+
+# it is not very crutial because the shape of the distribution looks normal, but I
+# will remove this sample (I will still have 94 samples left)
+
+keep = !"SRR1146078" == names(cpm)
+cpm <- cpm[, keep]
+
+
+
+
+
+sampleDists <- dist(t(cpm[, samples_lesional]))
+sampleDistMatrix <- as.matrix( sampleDists )
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists)
+
