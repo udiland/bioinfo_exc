@@ -148,14 +148,20 @@ all(colnames(cpm) == rownames(annot))
 # get the count data based on the filtartion of CPM
 counts <- counts[rownames(cpm), colnames(cpm)]
 
-# build deseq2 object
+# build deseq2 data set object
 dds <- DESeqDataSetFromMatrix(countData = counts,
                               colData = annot,
                               design = ~type)
+
+# print summary (and sanity check)
 dds
 
+# run DE analysis
+dds <- DESeq(dds)
 
-
+# take the results
+res <- results(dds)
+res
 
 
 
