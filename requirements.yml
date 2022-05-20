@@ -3,7 +3,9 @@ channels:
   - r
   - bioconda
 dependencies:
-  - r=4.1.2
+  - r
   - rstudio
   - r-ggplot2
- 
+  - r-pheatmap
+  - r-factoextra 
+  - bioconductor-enhancedvolcano
