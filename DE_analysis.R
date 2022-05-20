@@ -297,10 +297,41 @@ colnames(res_annotated)[1] <- "ENSMBL.ID"
 
 write.table(res_annotated, "DESeq_results.tsv", sep = '\t', row.names = F)
 
+# select top 100 most significant and annotaed genes
+res_annotated_only <- merge(as.data.frame(res), genes_annot, by.x=0, by.y=1)
 
-sampleDists <- dist(t(cpm[, samples_lesional]))
-sampleDistMatrix <- as.matrix( sampleDists )
-pheatmap(sampleDistMatrix,
-         clustering_distance_rows = sampleDists,
-         clustering_distance_cols = sampleDists)
+# order the table by p-adjusted
+res_annotated_only <- res_annotated_only[order(res_annotated_only$padj) ,]
+
+#select top 100
+res_annotated_only <- res_annotated_only[1:100 ,]
+
+# merge with log2cpm
+top100_sig_cpm <- merge(res_annotated_only, log2cpm, by.x=1, by.y=0, all.x=T)
+
+# remove unnessesary columns
+colnames(top100_sig_cpm)
+
+top100_sig_cpm <- top100_sig_cpm[, c(1,11:length(colnames(top100_sig_cpm)))]
+
+rownames(top100_sig_cpm) <- top100_sig_cpm$Row.names
+
+top100_sig_cpm <- top100_sig_cpm[, c(2:length(colnames(top100_sig_cpm)))]
+
+# z-score normalize the log2cpm
+cal_z_score <- function(x){
+  (x - mean(x)) / sd(x)
+}
+
+top100_sig_cpm_norm <- t(apply(top100_sig_cpm, 1, cal_z_score))
+
+# create heatmap
+HM <- pheatmap(top100_sig_cpm_norm, annotation_col = annot, show_rownames = F, show_colnames = F)
+
+pdf("Top100_sig_heatmap.pdf")
+HM
+dev.off()
+
+
+
 
