@@ -141,7 +141,6 @@ log2cpm <- log2cpm[, keep]
 annot$names <- rownames(annot)
 # filter rows 
 keep <- !(rownames(annot) == "SRR1146078") 
-
 annot <- annot[keep,]
 
 # remove 'names' column
@@ -229,7 +228,7 @@ lesional_samples <- rownames(annot)[annot$type == 'lesional']
 
 normal_samples <- rownames(annot)[annot$type == 'normal']
 
-sum(lesional_samples %in% clust1) #93
+sum(lesional_samples %in% clust1) #93 # 'lesional' -> clust1, 'normal' -> clust2 
 sum(lesional_samples %in% clust2) #1
 
 
@@ -282,8 +281,21 @@ res <- results(dds)
 res
 
 
+# read gene annotations
+genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quote = "", fill = F)
 
+# make a df with results and annotations (only for genes that hase annotations)
+res_annotated <- merge(as.data.frame(res), genes_annot, by.x=0, by.y=1, all.x=T)
+head(res_annotated, 2)
 
+# filter columns and write results
+colnames(res_annotated)
+
+res_annotated <- res_annotated[, c(1,3,7,8,9,10)]
+
+colnames(res_annotated)[1] <- "ENSMBL.ID"
+
+write.table(res_annotated, "DESeq_results.tsv", sep = '\t', row.names = F)
 
 
 sampleDists <- dist(t(cpm[, samples_lesional]))
