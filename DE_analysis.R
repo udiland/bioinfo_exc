@@ -23,7 +23,7 @@ BiocManager::install("DESeq2")
 
 library(DESeq2)
 
-# set working directory
+# set working directory to where the you have the reopsitory
 setwd("~/<path>/bioinfo_exc")
 
 # read count data (place column number 1 as rownames)
@@ -175,25 +175,24 @@ sum(top_var %in% top_means)
 # PC of top 500 most vairable genes
 PC <-  prcomp(t(log2cpm[top_var ,]), center = TRUE, scale. = TRUE)
 
-par(mfrow=c(1,2),mar = c(5,3,2,1))
-
 plot(PC$x[,1] , PC$x[,2], cex=2, col=factor(annot_samples$type), xlab="PC1", ylab="PC2", 
      pch=16, main="PCA of top 500 most varaible genes", las=1)
+# add sample labels (optional)
 text(PC$x[,1] , PC$x[,2], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
 
 plot(PC$x[,3] , PC$x[,4], cex=2, col=factor(annot_samples$type), xlab="PC3", ylab="PC4",
      pch=16, main="PCA of top 500 most varaible genes", las=1)
 text(PC$x[,3] , PC$x[,4], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
-
-# from the PCA analysis we can see that PC1 is good at differentiating between the two types of samples. however,
-# its looks like there is a sample from one type with expression pattern more similar to samples from the other type 
+'''
+ from the PCA analysis we can see that PC1 is good at differentiating between the two types of samples while
+ PC 2,3,4 do not seperate acording to type. 
+ however,its looks like there is a sample from one type with expression pattern more similar to samples from the other type 
+'''
 
 # chack sample grouping with top expressed genes
 
 PC <-  prcomp(t(log2cpm[top_means ,]), center = TRUE, scale. = TRUE)
 
-par(mfrow=c(1,2),mar = c(5,3,2,1))
-
 plot(PC$x[,1] , PC$x[,2], cex=2, col=factor(annot_samples$type), xlab="PC1", ylab="PC2", 
      pch=16, main="PCA of top 500 most varaible genes", las=1)
 text(PC$x[,1] , PC$x[,2], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
@@ -202,7 +201,7 @@ plot(PC$x[,3] , PC$x[,4], cex=2, col=factor(annot_samples$type), xlab="PC3", yla
      pch=16, main="PCA of top 500 most varaible genes", las=1)
 text(PC$x[,3] , PC$x[,4], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
 
-# can genearly see the same pattern but here some of the samples from the different groups are closer
+# can genearly see the same pattern but here some of the samples from the different groups are closer in PC1
 
 
 ## use k-means to cluster the two groups ###################################################################
@@ -232,7 +231,9 @@ sum(lesional_samples %in% clust2) #93
 # 'lesional' -> clust2, 'normal' -> clust1
 
 # from the above I can conclude that k-mean cluster 2 is the 'lesional' group and the 'normal'
-# group coresponed to cluster 1
+# group coresponed to cluster 1 
+#ATTENTION! the cluster annotation is random so the cluster names
+#(i.e. cluster1, cluster2) can switch when re-running the code
 sum(lesional_samples %in% clust1)
 
 # so the one sample in clust1 that come from 'lesional' should be removed.
@@ -261,7 +262,7 @@ annot_samples$type <- factor(annot_samples$type, levels= c("normal" ,"lesional")
 #check that the order of sample names is the same in the column of the CPM and rows of annotation table
 all(colnames(log2cpm) == rownames(annot_samples))
 
-# get the count data based on the filtartion of CPM
+# subset the count data based on the filtartion of CPM
 counts <- counts[rownames(log2cpm), colnames(log2cpm)]
 
 # build deseq2 data set object
@@ -325,7 +326,7 @@ cal_z_score <- function(x){
 top100_sig_cpm_norm <- t(apply(top100_sig_cpm, 1, cal_z_score))
 
 # create heatmap
-HM <- pheatmap(top100_sig_cpm_norm, annotation_col = annot, show_rownames = F, show_colnames = F)
+HM <- pheatmap(top100_sig_cpm_norm, annotation_col = annot_samples, show_rownames = F, show_colnames = F)
 
 pdf("Top100_sig_heatmap.pdf")
 HM
@@ -343,3 +344,93 @@ vp <- EnhancedVolcano(res, x = "log2FoldChange", y = "padj", lab="", pCutoff = m
 pdf("VolcanoPlot_top_100.pdf")
 vp
 dev.off()
+
+###### END PART1 ####################################################################################
+
+'''
+In this section I will make an interactive graph the show a scatter plot with the mean log2cpm of the two conditions.
+significant genes (padj < 0.05) that are up-regulated (FC >1) will be colored blue
+and significant genes (padj < 0.05) that are down-regulated (FC < -1) will be colored red
+it uses plotly to create html file that will show gene information while hoovering on a point
+and by clicking on a point (gene) it will direct the user to the gene page on ENSMBL website.
+The plot can be zoom in/out and saved as a picture
+'''
+
+# make a table of gene information, differentail expression and log2cpm
+expression_cpm <- merge(res_annotated, log2cpm, by.x=1, by.y=0)
+#sanity check
+dim(expression_cpm)
+dim(res_annotated)
+dim(log2cpm)
+head(expression_cpm)
+
+#calculate log2cpm mean for each type
+#add samples names as different column
+annot_samples$samples <- rownames(annot_samples)
+# create a vector of samples name for normal and lesional
+normal_samples <- annot_samples$samples[annot_samples$type == 'normal']
+lesional_samples <- annot_samples$samples[annot_samples$type == 'lesional']
+
+# add to main expression_cpm table the mean log2cpm columns for each type
+expression_cpm$normal_log2cpm_mean <- rowMeans(expression_cpm[, normal_samples])
+expression_cpm$lesional_log2cpm_mean <- rowMeans(expression_cpm[, lesional_samples])
+
+#tag genes as up-regulated, down regulated or not changed by significance
+# with padj < 0.05 and |log2FoldChange| > 1
+expression_cpm$group <- ifelse(expression_cpm$padj < 0.05 & expression_cpm$log2FoldChange >= 1, 1, 0)
+expression_cpm$group <- ifelse(expression_cpm$padj < 0.05 & expression_cpm$log2FoldChange <= -1, -1, expression_cpm$group)
+expression_cpm$group <- as.factor(expression_cpm$group)
+
+# how many genes in each group?
+table(expression_cpm$group)
+'''
+   -1     0     1 
+ 1162 16005  1119 
+1162 genes are downregulated in lesional compare noraml
+1119 genes are upregulated
+16005 do not change significatly
+'''
+
+# add text annotation
+expression_cpm$text <- paste("ENSMBL.ID: ", expression_cpm$ENSMBL.ID,
+                             "\nlog2FoldChange: ", round(expression_cpm$log2FoldChange, 4),
+                             "\nSYMBOL: ", expression_cpm$SYMBOL, 
+                             "\nGENENAME: ", expression_cpm$GENENAME,
+                             "\nPV_adj:", expression_cpm$padj, sep = "")
+#add link 
+expression_cpm$link <- paste("https://www.ensembl.org/Homo_sapiens/Gene/Summary?g=", expression_cpm$ENSMBL.ID, sep="")
+
+# plot log2cpm with significance
+plot <- ggplot(data = expression_cpm, aes(x = normal_log2cpm_mean, y = lesional_log2cpm_mean, color=group, text=text)) + 
+  geom_point() + theme_classic() + 
+  scale_color_manual(values = c("0" = "black", "-1" = "tomato2","1"= "skyblue4")) +
+  theme(legend.position = "none", axis.line = element_blank()) + xlab("Normal [log2 CPM]") + 
+  ylab("Lesional [log2 CPM]")
+        
+
+
+p2 <- ggplotly(plot, tooltip = c('text'))
+
+
+# add link to each color group
+for(i in 1:length(p2$x$data)){
+  if(p2$x$data[[i]]$name %in% levels(expression_cpm$group)){
+    p2$x$data[[i]]$customdata = expression_cpm$link
+  }
+}
+
+
+js <- "
+function(el) {
+  el.on('plotly_click', function(d) {
+    var url = d.points[0].customdata;
+    //url
+    window.open(url);
+  });
+}"
+
+
+p3 <- ggplotly(onRender(p2, js))
+
+
+saveWidget(p3, "log2cpm_normal_vs_lesional.html")
