@@ -13,15 +13,22 @@ library(ggplot2)
 library(pheatmap)
 library(factoextra)
 library(EnhancedVolcano)
+library(htmlwidgets)
+library(plotly)
 set.seed(123)
 
-#install & load DESeq2 (cannot be ibstalled with conda on a windows machine)
+#install & load DESeq2 and Biobase (cannot be ibstalled with conda on a windows machine)
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
 
 BiocManager::install("DESeq2")
 
+BiocManager::install("Biobase")
+
 library(DESeq2)
+
+library(Biobase)
+
 
 # set working directory to where the you have the reopsitory
 setwd("~/<path>/bioinfo_exc")
@@ -434,3 +441,58 @@ p3 <- ggplotly(onRender(p2, js))
 
 
 saveWidget(p3, "log2cpm_normal_vs_lesional.html")
+
+# save 'expression_cpm' 
+write.csv(expression_cpm, "normal_vs_lesional_log2cpm_annotations.csv", row.names = F)
+
+
+##########################################################################################
+# use ExpressionSet to store the raw data
+
+# read count data
+counts <- read.table("data/counts.txt", sep = "\t", header = TRUE, row.names = 1)
+
+# read sample anotations
+annot_samples <- read.table("data/sample-annotation.txt", sep = "\t", header = T, row.names = 1)
+
+# read gene annotations
+genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quote = "", fill = F, row.names = 1)
+
+# add missing genes to annotation table
+genes_annot <- merge(genes_annot,counts, by.x=0, by.y=0, all.y=T)[,c(1:3)]
+rownames(genes_annot) <- genes_annot$Row.names
+genes_annot <- genes_annot[, c(2,3)]
+
+lesional_normal_raw_read_count_eset <- ExpressionSet(assayData = as.matrix(counts),
+                      phenoData = AnnotatedDataFrame(annot_samples),
+                      featureData = AnnotatedDataFrame(genes_annot))
+#sanity check
+dim(lesional_normal_raw_read_count_eset)
+dim(fData(lesional_normal_raw_read_count_eset))
+head(fData(lesional_normal_raw_read_count_eset))
+head(pData(lesional_normal_raw_read_count_eset))
+
+## create Expression set for log2cpm data (using object made above)
+#make sure number of features and samples are the same
+head(log2cpm)
+dim(log2cpm)
+dim(annot_samples)
+
+#create genes (features) table:
+genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quote = "", fill = F, row.names = 1)
+genes_annot <- merge(genes_annot,log2cpm, by.x=0, by.y=0, all.y=T)[,c(1:3)]
+rownames(genes_annot) <- genes_annot$Row.names
+genes_annot <- genes_annot[, c(2,3)]
+#order the rows in both table (counts and features) in the same order
+log2cpm  <- log2cpm[rownames(genes_annot) ,]
+lesional_normal_log2cpm_read_count_eset <- ExpressionSet(assayData = as.matrix(log2cpm),
+                                                     phenoData = AnnotatedDataFrame(annot_samples),
+                                                     featureData = AnnotatedDataFrame(genes_annot))
+
+#sanity check
+dim(lesional_normal_log2cpm_read_count_eset)
+dim(fData(lesional_normal_log2cpm_read_count_eset))
+head(fData(lesional_normal_log2cpm_read_count_eset))
+head(pData(lesional_normal_log2cpm_read_count_eset))
+
+#######################################################################################################
