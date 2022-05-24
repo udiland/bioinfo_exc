@@ -4,4 +4,4 @@
 
 `conda env create -f requirements.yml`
 
-prerun R-markdown report is available in DE_analysis.html
+* prerun R-markdown report is available in DE_analysis.html
