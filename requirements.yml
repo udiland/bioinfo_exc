@@ -9,3 +9,6 @@ dependencies:
   - r-pheatmap
   - r-factoextra 
   - bioconductor-enhancedvolcano
+  - r-plotly
+  - r-htmlwidgets
+  - bioconductor-biobase
