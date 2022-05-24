@@ -8,7 +8,7 @@
 #########################################################################
 
 
-# load packges
+# load packages
 library(ggplot2)
 library(pheatmap)
 library(factoextra)
@@ -17,7 +17,7 @@ library(htmlwidgets)
 library(plotly)
 set.seed(123)
 
-#install & load DESeq2 and Biobase (cannot be ibstalled with conda on a windows machine)
+#install & load DESeq2 and Biobase (cannot be installed with conda on a windows machine)
 if (!require("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
 
@@ -158,7 +158,7 @@ annot_samples <- data.frame(type = annot_samples[, c("type")], row.names = annot
 
 #### use top variable/expressed genes to measure variantion between samples ################
 
-#Compute the mean, variance and cv for each gene and sort them in decreasing order
+#Compute the mean and variance for each gene and sort them in decreasing order
 means <- rowMeans(log2cpm)
 vars <- apply(log2cpm,1,var)
 
@@ -483,6 +483,15 @@ genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quot
 genes_annot <- merge(genes_annot,log2cpm, by.x=0, by.y=0, all.y=T)[,c(1:3)]
 rownames(genes_annot) <- genes_annot$Row.names
 genes_annot <- genes_annot[, c(2,3)]
+
+annot_samples <- read.table("data/sample-annotation.txt", sep = "\t", header = T, row.names = 1)
+# ramove filtered samples
+annot_samples$names <- rownames(annot_samples)
+annot_samples <- annot_samples[annot_samples$names != "SRR1146216" ,]  
+annot_samples <- annot_samples[annot_samples$names != "SRR1146078" ,]
+annot_samples <- data.frame('type'=annot_samples[,1], row.names = rownames(annot_samples))
+
+
 #order the rows in both table (counts and features) in the same order
 log2cpm  <- log2cpm[rownames(genes_annot) ,]
 lesional_normal_log2cpm_read_count_eset <- ExpressionSet(assayData = as.matrix(log2cpm),
