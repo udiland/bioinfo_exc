@@ -1,0 +1,657 @@
+---
+title: "RNA-Seq differential analysis expression with DESeq2"
+output: html_document
+---
+
+### load packages
+```{r results='hide', warning=FALSE, message=FALSE}
+library(ggplot2)
+library(pheatmap)
+library(factoextra)
+library(EnhancedVolcano)
+library(htmlwidgets)
+library(plotly)
+set.seed(123)
+```
+
+
+### Install & load DESeq2 and Biobase (cannot be installed with conda on a windows machine)
+```{r eval=FALSE}
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+
+BiocManager::install("Biobase")
+
+```{r results='hide', warning=FALSE, message=FALSE}
+library(DESeq2)
+library(Biobase)
+```
+
+
+### set working directory to where the you have the github reopsitory files
+```{r eval=FALSE}
+setwd("~/<path>/bioinfo_exc")
+```
+
+
+### read count data 
+```{r}
+counts <- read.table("data/counts.txt", sep = "\t", header = TRUE, row.names = 1)
+```
+
+
+### have a look
+```{r}
+head(counts, 2)
+```
+
+
+### are there missing values?
+```{r}
+sum(is.na(counts))
+```
+
+### how many samples/genes?
+```{r}
+dim(counts)
+```
+
+### calculate count per million (CPM) in order to normalize counts by library size
+```{r}
+cpm <- apply(counts,2, function(x) (x/sum(x))*1e6)
+```
+
+### save count as RDS file
+```{r eval=FALSE}
+saveRDS(cpm, file = "noraml_lesion_CPM.rds")
+```
+
+### read sample annotations
+```{r}
+annot_samples <- read.table("data/sample-annotation.txt", sep = "\t", header = T, row.names = 1)
+```
+
+### have a look
+```{r}
+head(annot_samples, 2)
+summary(annot_samples)
+```
+
+
+
+### how many samples in each type?
+```{r}
+table(annot_samples$type)
+```
+
+### how many samples? (are the same as number of column in counts?)
+```{r}
+dim(annot_samples)[1]
+```
+
+### are the names the same in counts and annotation?
+```{r}
+sum(colnames(counts) %in% rownames(annot_samples))
+```
+
+### make a vector of sample_id for each condition (normal/lesional)
+```{r}
+samples_normal <- rownames(annot_samples)[annot_samples$type == 'normal']
+samples_lesional <- rownames(annot_samples)[annot_samples$type == 'lesional']
+```
+
+## Filter low expressing genes
+## for each condition mark genes that have CPM > 1 in at least 75% of samples
+### genes that pass the filter in the normal group
+```{r}
+genes2keep_normal <- names(which(rowSums(cpm[, samples_normal] > 1) > length(samples_normal)*0.75))
+```
+
+### how many are there?
+```{r}
+length(genes2keep_normal) 
+```
+
+### genes that pass the filter in the lesional group
+```{r}
+genes2keep_lesional <- names(which(rowSums(cpm[, samples_lesional] > 1) > length(samples_lesional)*0.75))
+```
+
+### how many are there?
+```{r}
+length(genes2keep_lesional) 
+```
+
+### combine the genes names and remove duplications
+```{r}
+genes2keep <- unique(c(genes2keep_normal, genes2keep_lesional))
+```
+
+### subset the count table according to the filtering condition
+```{r}
+cpm <- cpm[genes2keep ,]
+```
+
+### how many genes we have left?
+```{r}
+dim(cpm)[1]
+```
+
+### save filtered count as RDS file
+```{r eval=FALSE}
+saveRDS(cpm, file = "noraml_lesional_CPM_filtered.rds")
+```
+
+## check the samples integrety and variation
+### transform data to log2CPM (add 1 to aviod taking log of 0)
+```{r}
+log2cpm <- log2(cpm + 1)
+```
+
+### plot log2(cpm) distribution for each sample in normal group
+```{r}
+plot(density(log2cpm[,samples_normal[1]]), main="Distribution of log2cpm for each sample in 'Noraml' group")
+
+for (i in samples_normal[2:length(samples_normal)]){
+  lines(density(log2cpm[, i]))
+}
+```
+the log2cpm distribution of each sample looks more or less similar in the normal group
+
+### plot log2cpm distribution for each sample in lesional group
+```{r}
+plot(density(log2cpm[,samples_lesional[1]]), main="Distribution of log2cpm for each sample in 'Lesional' group")
+for (i in samples_lesional[2:length(samples_lesional)]){
+  lines(density(log2cpm[, i]))
+}
+```
+from the plot its looks like one sample values distribute different than the rest
+
+### plot samples mean for the lesional group
+```{r}
+hist((colMeans(log2cpm[,samples_lesional])), main="Mean log2cpm for Lesional group samples")
+
+```
+
+### who is the sample with low mean?
+```{r}
+which((colMeans(log2cpm[,samples_lesional])) < 3.5)
+```
+sample SRR1146078 has values that are a bit lower than most of samples in the lesion group
+
+### change cpm matrix to dataframe for convience and look at the distribution of the different sample
+```{r}
+log2cpm <- as.data.frame(log2cpm)
+plot(density(log2cpm$SRR1146078), "log2pcm distribution in SRR1146078")
+```
+it is not very crutial because the shape of the distribution looks the same and there are many other samples in that group, but I will remove this sample (I will still have 94 samples left)
+
+```{r}
+keep = !"SRR1146078" == names(log2cpm)
+log2cpm <- log2cpm[, keep]
+```
+
+### also remove tha sample from the annotation table
+```{r}
+#copy row names to new column (otherwise they will be lost)
+annot_samples$names <- rownames(annot_samples)
+
+# filter rows 
+keep <- !(rownames(annot_samples) == "SRR1146078") 
+annot_samples <- annot_samples[keep,]
+
+# remove 'names' column
+annot_samples <- data.frame(type = annot_samples[, c("type")], row.names = annot_samples$names)
+
+```
+
+## use top variable/expressed genes to measure variantion between samples
+
+### Compute the mean and variance for each gene
+```{r}
+means <- rowMeans(log2cpm)
+vars <- apply(log2cpm,1,var)
+```
+
+### Sort, select and plot the top 500 highly variable genes from the data
+```{r}
+vars <- sort( vars , decreasing=T)
+top_var <- names(vars) [1:500]
+```
+
+### Sort, select and plot the top 500 highly expressed genes from the data
+```{r}
+means <- sort( means , decreasing=T)
+top_means <- names(means) [1:500]
+```
+
+### plot top 20 variable and expressed genes
+```{r}
+par(mfrow=c(1,2),mar = c(5,3,2,1))
+boxplot(t(log2cpm[ top_var[1:20],]),  las=2 , col="grey" , main="log2CPM (top var 20 genes)" ,cex=.2)
+boxplot(t(log2cpm[ top_means[1:20],]),  las=2 , col="grey" , main="log2CPM (top express 20 genes)" ,cex=.2)
+```
+
+### how many in both groups
+```{r}
+sum(top_means %in% top_var)
+sum(top_var %in% top_means)
+```
+
+## PCA analysis of log2CPM data
+### PC of top 500 most vairable genes
+```{r}
+PC <-  prcomp(t(log2cpm[top_var ,]), center = TRUE, scale. = TRUE)
+
+# PC1 Vs PC2
+plot(PC$x[,1] , PC$x[,2], cex=2, col=factor(annot_samples$type), xlab="PC1", ylab="PC2", 
+     pch=16, main="PCA of top 500 most varaible genes", las=1)
+
+# add sample labels (optional)
+text(PC$x[,1] , PC$x[,2], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
+
+#PC3 Vs PC4
+plot(PC$x[,3] , PC$x[,4], cex=2, col=factor(annot_samples$type), xlab="PC3", ylab="PC4",
+     pch=16, main="PCA of top 500 most varaible genes", las=1)
+text(PC$x[,3] , PC$x[,4], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
+```
+from the PCA analysis we can see that PC1 is good at differentiating between the two types of samples while PC 2,3,4 do not seperate acording to type. however,its looks like there is a sample from one type with expression pattern more similar to samples from the other type (the black point among the pink ones)
+
+### chack sample grouping with top expressed genes
+```{r}
+PC <-  prcomp(t(log2cpm[top_means ,]), center = TRUE, scale. = TRUE)
+
+plot(PC$x[,1] , PC$x[,2], cex=2, col=factor(annot_samples$type), xlab="PC1", ylab="PC2", 
+     pch=16, main="PCA of top 500 most varaible genes", las=1)
+#text(PC$x[,1] , PC$x[,2], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
+
+plot(PC$x[,3] , PC$x[,4], cex=2, col=factor(annot_samples$type), xlab="PC3", ylab="PC4",
+     pch=16, main="PCA of top 500 most varaible genes", las=1)
+#text(PC$x[,3] , PC$x[,4], cex=.7, labels = paste0(rownames(annot_samples)), pos = 3)
+```
+can genearly see the same pattern but here some of the samples from the different groups are closer in PC1
+
+
+## use k-means to find the outlier sample
+### K-means on samples with top 500 expression. with k=2
+```{r}
+top500_exp_k2 <- kmeans(t(log2cpm[top_means,]), 2)
+```
+
+### plot the groups
+```{r}
+fviz_cluster(list(data = t(log2cpm[top_means ,]), cluster = top500_exp_k2$cluster),
+             ellipse.type = "norm", geom = "point", stand = FALSE,
+             palette = "jco", ggtheme = theme_classic())
+```
+### we can see nice seperation between the groups
+
+### collect samples that were asigned to cluster 1 and 2
+```{r}
+clust1 <- names(which(top500_exp_k2$cluster == 1))
+
+clust2 <- names(which(top500_exp_k2$cluster == 2))
+```
+
+### find which cluster coresponed to 'lesional' and to 'normal'
+```{r}
+lesional_samples <- rownames(annot_samples)[annot_samples$type == 'lesional']
+
+normal_samples <- rownames(annot_samples)[annot_samples$type == 'normal']
+```
+
+### which cluster represent which group?
+```{r}
+sum(lesional_samples %in% clust1)  
+sum(normal_samples %in% clust2) 
+```
+from the above I can conclude that k-mean cluster 1 is the 'lesional' group and the 'normal' group coresponed to cluster 2 (ATTENTION! the cluster annotation might be random so the cluster names (i.e. cluster1, cluster2) can switch when re-running the code
+```{r}
+# I expect to find 1 sample from the  'lesional' group in cluster 2
+sum(lesional_samples %in% clust2)
+```
+
+### so the one sample in clust2 that come from 'lesional' should be removed.
+```{r}
+lesional_samples[lesional_samples %in% clust2]
+```
+
+
+### sample "SRR1146216" shold be removed!
+```{r}
+keep = !"SRR1146216" == names(log2cpm)
+log2cpm <- log2cpm[, keep]
+```
+
+```{r echo=F}
+# copy row names to new column (otherwise they will be lost)
+annot_samples$names <- rownames(annot_samples)
+```
+### also remove tha sample from the annotation table
+```{r}
+keep <- !(rownames(annot_samples) == "SRR1146216") 
+
+annot_samples <- annot_samples[keep,]
+```
+```{r echo=FALSE}
+# remove 'names' column
+annot_samples <- data.frame(type = annot_samples[, c("type")], row.names = annot_samples$names)
+```
+
+## prepare table for Differential analsys with DESeq2
+
+### define 'type' column as factor and specify what levels is the 'base' (what we will compare to)
+```{r}
+annot_samples$type <- factor(annot_samples$type, levels= c("normal" ,"lesional"))
+```
+
+
+### check that the order of sample names is the same in the column of the CPM and rows of annotation table
+```{r}
+all(colnames(log2cpm) == rownames(annot_samples))
+```
+
+### subset the count data based on the filtartion of CPM
+```{r}
+counts <- counts[rownames(log2cpm), colnames(log2cpm)]
+```
+
+### build deseq2 data set object
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = counts,
+                              colData = annot_samples,
+                              design = ~type)
+```
+
+### print summary (and sanity check)
+```{r}
+dds
+```
+
+### run DE analysis
+```{r results='hide', warning=FALSE, message=FALSE}
+dds <- DESeq(dds)
+```
+
+### store the results table
+```{r}
+res <- results(dds)
+res
+```
+
+### read gene annotations
+```{r}
+genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quote = "", fill = F)
+```
+
+### make a date frame with results and annotations and look at first 2 rows
+```{r}
+res_annotated <- merge(as.data.frame(res), genes_annot, by.x=0, by.y=1, all.x=T)
+head(res_annotated, 2)
+```
+
+### filter columns and write results
+```{r}
+res_annotated <- res_annotated[, c(1,3,7,8,9,10)]
+
+colnames(res_annotated)[1] <- "ENSMBL.ID"
+
+```
+```{r eval=FALSE}
+write.table(res_annotated, "DESeq_results.tsv", sep = '\t', row.names = F)
+```
+
+### select top 100 most significant and annotaed genes
+```{r}
+res_annotated_only <- merge(as.data.frame(res), genes_annot, by.x=0, by.y=1)
+```
+
+### order the table by p-adjusted
+```{r}
+res_annotated_only <- res_annotated_only[order(res_annotated_only$padj) ,]
+```
+
+### select top 100
+```{r}
+res_annotated_only <- res_annotated_only[1:100 ,]
+```
+
+### merge with log2cpm
+```{r}
+top100_sig_cpm <- merge(res_annotated_only, log2cpm, by.x=1, by.y=0, all.x=T)
+```
+
+### remove unnecessary columns
+```{r}
+top100_sig_cpm <- top100_sig_cpm[, c(1,11:length(colnames(top100_sig_cpm)))]
+rownames(top100_sig_cpm) <- top100_sig_cpm$Row.names
+
+top100_sig_cpm <- top100_sig_cpm[, c(2:length(colnames(top100_sig_cpm)))]
+```
+
+## plot heatmap of top 100 significant genes
+### z-score normalize the log2cpm
+```{r}
+cal_z_score <- function(x){
+  (x - mean(x)) / sd(x)
+}
+
+top100_sig_cpm_norm <- t(apply(top100_sig_cpm, 1, cal_z_score))
+```
+
+### create and save heatmap
+```{r}
+HM <- pheatmap(top100_sig_cpm_norm, annotation_col = annot_samples, show_rownames = F, show_colnames = F)
+HM
+```
+```{r eval=FALSE}
+pdf("Top100_sig_heatmap.pdf")
+HM
+dev.off()
+```
+
+## plot volcano
+### check what is the minimum padj value of top 100 geens in order to color the plot with top 100 significant genes 
+```{r}
+res <- as.data.frame(res)
+min_padj <- max(sort(res$padj)[1:100])
+```
+
+### volcano plot with top 100 sig geens in red (FC cutoff 1)
+```{r}
+vp <- EnhancedVolcano(res, x = "log2FoldChange", y = "padj", lab="", pCutoff = min_padj)
+vp
+```
+```{r eval=FALSE}
+pdf("VolcanoPlot_top_100.pdf")
+vp
+dev.off()
+```
+
+## generate interactive plot with plotly
+### make a table of gene information, differentail expression and log2cpm
+```{r}
+expression_cpm <- merge(res_annotated, log2cpm, by.x=1, by.y=0)
+```
+
+### sanity check
+```{r}
+dim(expression_cpm)
+dim(res_annotated)
+dim(log2cpm)
+```
+
+### calculate log2cpm mean for each type and 
+```{r}
+annot_samples$samples <- rownames(annot_samples)
+# create a vector of samples name for normal and lesional
+normal_samples <- annot_samples$samples[annot_samples$type == 'normal']
+lesional_samples <- annot_samples$samples[annot_samples$type == 'lesional']
+
+# add to main expression_cpm table the mean log2cpm columns for each type
+expression_cpm$normal_log2cpm_mean <- rowMeans(expression_cpm[, normal_samples])
+expression_cpm$lesional_log2cpm_mean <- rowMeans(expression_cpm[, lesional_samples])
+```
+
+
+
+### tag genes as up-regulated, down regulated or not changed by padj < 0.05 and |log2FoldChange| > 1
+```{r}
+expression_cpm$group <- ifelse(expression_cpm$padj < 0.05 & expression_cpm$log2FoldChange >= 1, 1, 0)
+expression_cpm$group <- ifelse(expression_cpm$padj < 0.05 & expression_cpm$log2FoldChange <= -1, -1, expression_cpm$group)
+expression_cpm$group <- as.factor(expression_cpm$group)
+```
+
+### how many genes in each group?
+```{r}
+table(expression_cpm$group)
+```
+1162 genes are downregulated in lesional compare noraml
+1119 genes are upregulated
+16005 do not change significatly
+
+### add annotation
+```{r}
+expression_cpm$text <- paste("ENSMBL.ID: ", expression_cpm$ENSMBL.ID,
+                             "\nlog2FoldChange: ", round(expression_cpm$log2FoldChange, 4),
+                             "\nSYMBOL: ", expression_cpm$SYMBOL, 
+                             "\nGENENAME: ", expression_cpm$GENENAME,
+                             "\nPV_adj:", expression_cpm$padj, sep = "")
+```
+
+### add link to ensmbl page for each gene
+```{r}
+expression_cpm$link <- paste("https://www.ensembl.org/Homo_sapiens/Gene/Summary?g=", expression_cpm$ENSMBL.ID, sep="")
+```
+
+
+### generate plot
+```{r}
+plot <- ggplot(data = expression_cpm, aes(x = normal_log2cpm_mean, y = lesional_log2cpm_mean, color=group, text=text)) + 
+  geom_point() + theme_classic() + 
+  scale_color_manual(values = c("0" = "black", "-1" = "tomato2","1"= "skyblue4")) +
+  theme(legend.position = "none", axis.line = element_blank()) + xlab("Normal [log2 CPM]") + 
+  ylab("Lesional [log2 CPM]")
+        
+
+
+p2 <- ggplotly(plot, tooltip = c('text'))
+
+
+# add link to each color group
+for(i in 1:length(p2$x$data)){
+  if(p2$x$data[[i]]$name %in% levels(expression_cpm$group)){
+    p2$x$data[[i]]$customdata = expression_cpm$link
+  }
+}
+
+
+js <- "
+function(el) {
+  el.on('plotly_click', function(d) {
+    var url = d.points[0].customdata;
+    //url
+    window.open(url);
+  });
+}"
+
+
+p3 <- ggplotly(onRender(p2, js))
+
+p3
+```
+
+### save plot and data
+```{r eval=FALSE}
+saveWidget(p3, "log2cpm_normal_vs_lesional.html")
+
+ 
+write.csv(expression_cpm, "normal_vs_lesional_log2cpm_annotations.csv", row.names = F)
+```
+
+## use ExpressionSet to store the data
+
+### read count data
+```{r}
+counts <- read.table("data/counts.txt", sep = "\t", header = TRUE, row.names = 1)
+```
+
+### read sample anotations
+```{r}
+annot_samples <- read.table("data/sample-annotation.txt", sep = "\t", header = T, row.names = 1)
+```
+
+### read gene annotations
+```{r}
+genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quote = "", fill = F, row.names = 1)
+```
+
+### create feature table table 
+```{r}
+genes_annot <- merge(genes_annot,counts, by.x=0, by.y=0, all.y=T)[,c(1:3)]
+rownames(genes_annot) <- genes_annot$Row.names
+genes_annot <- genes_annot[, c(2,3)]
+```
+
+## create ExpressionSet object with raw data
+```{r}
+lesional_normal_raw_read_count_eset <- ExpressionSet(assayData = as.matrix(counts),
+                      phenoData = AnnotatedDataFrame(annot_samples),
+                      featureData = AnnotatedDataFrame(genes_annot))
+```
+
+### sanity check
+```{r}
+dim(lesional_normal_raw_read_count_eset)
+dim(fData(lesional_normal_raw_read_count_eset))
+head(fData(lesional_normal_raw_read_count_eset) ,2)
+head(pData(lesional_normal_raw_read_count_eset), 2)
+```
+
+### prepare data to create Expression set for log2cpm data 
+```{r}
+# make sure number of features and samples are the same in count and annotation data
+dim(log2cpm)
+dim(annot_samples)
+```
+
+### create genes (features) table:
+```{r}
+genes_annot <- read.table("data/gene-annotation.txt", sep="\t", header = T, quote = "", fill = F, row.names = 1)
+genes_annot <- merge(genes_annot,log2cpm, by.x=0, by.y=0, all.y=T)[,c(1:3)]
+rownames(genes_annot) <- genes_annot$Row.names
+genes_annot <- genes_annot[, c(2,3)]
+```
+
+### order the rows in both table (counts and features) in the same order
+```{r}
+log2cpm  <- log2cpm[rownames(genes_annot) ,]
+```
+
+### create sample (phenotype) table:
+```{r}
+annot_samples <- read.table("data/sample-annotation.txt", sep = "\t", header = T, row.names = 1)
+# ramove filtered samples
+annot_samples$names <- rownames(annot_samples)
+annot_samples <- annot_samples[annot_samples$names != "SRR1146216" ,]  
+annot_samples <- annot_samples[annot_samples$names != "SRR1146078" ,]
+annot_samples <- data.frame('type'=annot_samples[,1], row.names = rownames(annot_samples))
+```
+
+## create ExpressionSet object with log2cpm
+```{r}
+lesional_normal_log2cpm_read_count_eset <- ExpressionSet(assayData = as.matrix(log2cpm),
+                                                     phenoData = AnnotatedDataFrame(annot_samples),
+                                                     featureData = AnnotatedDataFrame(genes_annot))
+```
+
+### sanity check
+```{r}
+dim(lesional_normal_log2cpm_read_count_eset)
+dim(fData(lesional_normal_log2cpm_read_count_eset))
+head(fData(lesional_normal_log2cpm_read_count_eset), 2)
+head(pData(lesional_normal_log2cpm_read_count_eset), 2)
+```
+
