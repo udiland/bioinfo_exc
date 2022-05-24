@@ -1,4 +1,4 @@
-RNA-Seq Differential expression analysis using DESeq2 
+# RNA-Seq Differential expression analysis using DESeq2 
 
 * Prepare the environment using conda
 
